@@ -257,7 +257,7 @@ def main():
     
     bot_instance = KronekortBot()
     
-    # Create application
+    # Create application with job queue
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     # Conversation handler for card number input
@@ -280,6 +280,11 @@ def main():
     
     # Schedule periodic balance checks
     job_queue = application.job_queue
+    if job_queue is None:
+        logger.error("JobQueue is not available. Please install python-telegram-bot with job-queue support:")
+        logger.error("  pip install 'python-telegram-bot[job-queue]'")
+        return
+    
     job_queue.run_repeating(
         bot_instance.check_all_users,
         interval=CHECK_INTERVAL,

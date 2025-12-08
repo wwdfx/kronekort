@@ -11,19 +11,38 @@ A Telegram bot that monitors your Kronekort balance and notifies you when it cha
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Create Virtual Environment (Recommended)
+
+**For Linux/macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+**For Windows:**
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+**Or use the setup script:**
+- Linux/macOS: `bash setup.sh`
+- Windows: `setup.bat`
+
+### 2. Install Dependencies
 
 ```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 2. Get Telegram Bot Token
+### 3. Get Telegram Bot Token
 
 1. Open Telegram and search for [@BotFather](https://t.me/BotFather)
 2. Send `/newbot` and follow the instructions
 3. Copy the bot token you receive
 
-### 3. Configure Environment
+### 4. Configure Environment
 
 Create a `.env` file in the project root:
 
@@ -31,11 +50,13 @@ Create a `.env` file in the project root:
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 ```
 
-### 4. Install Chrome/Chromium
+### 5. Install Chrome/Chromium
 
 The bot uses Selenium with Chrome to scrape the DNB website. Make sure you have Chrome or Chromium installed on your system.
 
-### 5. Run the Bot
+### 6. Run the Bot
+
+**Make sure your virtual environment is activated**, then:
 
 ```bash
 python bot.py
@@ -45,7 +66,7 @@ python bot.py
 
 1. Start a conversation with your bot on Telegram
 2. Send `/start` to begin
-3. Enter your 16-digit Kronekort card number when prompted
+3. Enter your 12-digit Kronekort card number when prompted
 4. The bot will automatically check your balance every 5 minutes
 5. You'll receive notifications when your balance changes
 6. Use `/balance` to manually check your balance anytime

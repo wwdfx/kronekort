@@ -18,3 +18,5 @@ echo ""
 echo "Then you can run the bot with:"
 echo "  python bot.py"
 
+
+

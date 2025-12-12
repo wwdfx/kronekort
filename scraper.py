@@ -146,30 +146,26 @@ class DNBScraper:
             import re
             balance = None
             
-            # Strategy 1: Look for the balance in the dnb-number-format__visible span
-            # The balance is in: <span class="dnb-number-format__visible" aria-hidden="true">104,05 kr</span>
-            balance_spans = soup.find_all('span', class_='dnb-number-format__visible')
-            for span in balance_spans:
-                text = span.get_text().strip()
-                # Look for pattern like "104,05 kr" or "1 234,56 kr"
-                match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
-                if match:
-                    try:
-                        balance_str = match.group(1).replace(' ', '').replace(',', '.')
-                        balance = float(balance_str)
-                        logger.info(f"Found balance: {balance} kr")
-                        break
-                    except:
-                        continue
+            # Extract balance - must be from the "Saldo" section, NOT from transactions
+            import re
+            balance = None
             
-            # Strategy 2: Look for the balance section (has "Saldo" text nearby)
-            if balance is None:
-                saldo_section = soup.find('p', string=re.compile('Saldo', re.IGNORECASE))
-                if saldo_section:
-                    # Find the next h2 with balance
-                    parent = saldo_section.find_parent()
-                    if parent:
-                        balance_elem = parent.find('span', class_='dnb-number-format__visible')
+            # Find the balance section: <div> with "Saldo" <p> and balance <h2>
+            # This section appears BEFORE the transaction table
+            # Look for divs with the specific class pattern that contains "Saldo"
+            balance_sections = soup.find_all('div', class_=lambda x: x and isinstance(x, list) and 'dnb-space' in x and 'dnb-space__top--medium' in x and 'dnb-space__bottom--zero' in x)
+            
+            for section in balance_sections:
+                # Check if this section contains "Saldo" text
+                saldo_p = section.find('p', class_='dnb-p', string=re.compile('^Saldo$', re.IGNORECASE))
+                if not saldo_p:
+                    saldo_p = section.find('p', string=re.compile('^Saldo$', re.IGNORECASE))
+                
+                if saldo_p:
+                    # Found the Saldo section, now get the balance from h2
+                    h2_balance = section.find('h2', class_='dnb-h--large')
+                    if h2_balance:
+                        balance_elem = h2_balance.find('span', class_='dnb-number-format__visible')
                         if balance_elem:
                             text = balance_elem.get_text().strip()
                             match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
@@ -178,8 +174,63 @@ class DNBScraper:
                                     balance_str = match.group(1).replace(' ', '').replace(',', '.')
                                     balance = float(balance_str)
                                     logger.info(f"Found balance from Saldo section: {balance} kr")
-                                except:
-                                    pass
+                                    break
+                                except Exception as e:
+                                    logger.debug(f"Error parsing balance: {e}")
+            
+            # Strategy 2: If class matching fails, find by structure - Saldo p followed by h2 in same parent
+            if balance is None:
+                saldo_p = soup.find('p', string=re.compile('^Saldo$', re.IGNORECASE))
+                if saldo_p:
+                    # Walk up to find the parent div that contains both Saldo and balance
+                    current = saldo_p.parent
+                    max_depth = 5
+                    depth = 0
+                    while current and depth < max_depth:
+                        # Check if this parent has an h2 with balance
+                        h2_balance = current.find('h2', class_='dnb-h--large')
+                        if h2_balance:
+                            balance_elem = h2_balance.find('span', class_='dnb-number-format__visible')
+                            if balance_elem:
+                                text = balance_elem.get_text().strip()
+                                match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
+                                if match:
+                                    try:
+                                        balance_str = match.group(1).replace(' ', '').replace(',', '.')
+                                        balance = float(balance_str)
+                                        logger.info(f"Found balance by parent traversal: {balance} kr")
+                                        break
+                                    except:
+                                        pass
+                        current = current.parent
+                        depth += 1
+            
+            # Strategy 3: Find balance by excluding transaction table area
+            # The balance appears before "Viser 5 siste transaksjoner" text
+            if balance is None:
+                transaksjoner_text = soup.find(string=re.compile('Viser.*siste transaksjoner', re.IGNORECASE))
+                if transaksjoner_text:
+                    trans_parent = transaksjoner_text.find_parent()
+                    # Find all h2 elements, but exclude those inside the transaction section
+                    all_h2 = soup.find_all('h2', class_='dnb-h--large')
+                    for h2 in all_h2:
+                        h2_parent = h2.find_parent()
+                        # Make sure this h2 is NOT inside the transaction section
+                        if h2_parent and trans_parent:
+                            # Check if h2 is a descendant of transaction parent
+                            if not (h2_parent in trans_parent.find_all() or h2_parent == trans_parent):
+                                balance_elem = h2.find('span', class_='dnb-number-format__visible')
+                                if balance_elem:
+                                    text = balance_elem.get_text().strip()
+                                    match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
+                                    if match:
+                                        try:
+                                            balance_str = match.group(1).replace(' ', '').replace(',', '.')
+                                            balance = float(balance_str)
+                                            logger.info(f"Found balance (excluding transactions): {balance} kr")
+                                            break
+                                        except:
+                                            continue
             
             # Extract transactions from the DNB table structure
             transactions = []

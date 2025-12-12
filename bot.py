@@ -143,9 +143,13 @@ class KronekortBot:
                 self.db.save_balance_check(user_id, balance, result.get('transactions', []))
                 
                 await update.message.reply_text(message, parse_mode='Markdown')
+            elif result is None:
+                await update.message.reply_text(
+                    "Kunne ikke hente saldo. En feil oppstod ved sjekking av nettstedet. Vennligst prøv igjen senere."
+                )
             else:
                 await update.message.reply_text(
-                    "Kunne ikke hente saldo. Vennligst prøv igjen senere."
+                    "Kunne ikke hente saldo. Saldoen ble ikke funnet på nettstedet. Vennligst prøv igjen senere."
                 )
         except Exception as e:
             logger.error(f"Error checking balance: {e}")

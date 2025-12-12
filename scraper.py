@@ -149,6 +149,7 @@ class DNBScraper:
             logger.info("Extracting balance...")
             
             # Strategy 1: Find "Saldo" paragraph and get balance from h2 in same parent
+            # The balance is in: <p>Saldo</p> followed by <h2> with <span class="dnb-number-format__visible">11&nbsp;007,05 kr</span>
             saldo_p = soup.find('p', string=re.compile('^Saldo$', re.IGNORECASE))
             if saldo_p:
                 logger.debug("Found 'Saldo' paragraph")
@@ -160,84 +161,99 @@ class DNBScraper:
                     # Check if this parent has an h2 with balance
                     h2_balance = current.find('h2', class_='dnb-h--large')
                     if h2_balance:
-                        balance_elem = h2_balance.find('span', class_='dnb-number-format__visible')
-                        if balance_elem:
-                            text = balance_elem.get_text().strip()
-                            logger.debug(f"Found balance element with text: {text}")
-                            match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
-                            if match:
-                                try:
-                                    balance_str = match.group(1).replace(' ', '').replace(',', '.')
-                                    balance = float(balance_str)
-                                    logger.info(f"Found balance by parent traversal: {balance} kr")
-                                    break
-                                except Exception as e:
-                                    logger.debug(f"Error parsing balance '{balance_str}': {e}")
+                        # Look for the balance span - it's inside a dnb-number-format span
+                        number_format = h2_balance.find('span', class_='dnb-number-format')
+                        if number_format:
+                            balance_elem = number_format.find('span', class_='dnb-number-format__visible')
+                            if balance_elem:
+                                # Get text and handle non-breaking spaces
+                                text = balance_elem.get_text().strip()
+                                # Replace non-breaking space with regular space
+                                text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+                                logger.debug(f"Found balance element with text: {text}")
+                                # Match pattern like "11 007,05 kr" or "11007,05 kr"
+                                match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
+                                if match:
+                                    try:
+                                        balance_str = match.group(1).replace(' ', '').replace(',', '.')
+                                        balance = float(balance_str)
+                                        logger.info(f"Found balance by parent traversal: {balance} kr")
+                                        break
+                                    except Exception as e:
+                                        logger.debug(f"Error parsing balance '{balance_str}': {e}")
                     current = current.parent
                     depth += 1
             
-            # Strategy 2: Find all divs with dnb-space classes and check for Saldo
+            # Strategy 2: Find balance by looking for dnb-number-format spans before transaction section
             if balance is None:
-                logger.debug("Trying strategy 2: searching divs with dnb-space classes")
-                # Try different ways to match the class
-                all_divs = soup.find_all('div', class_=lambda x: x and ('dnb-space' in str(x) or (isinstance(x, list) and 'dnb-space' in x)))
-                for div in all_divs:
-                    # Check if this div contains "Saldo" text
-                    saldo_text = div.find('p', string=re.compile('^Saldo$', re.IGNORECASE))
-                    if saldo_text:
-                        h2_balance = div.find('h2', class_='dnb-h--large')
-                        if h2_balance:
-                            balance_elem = h2_balance.find('span', class_='dnb-number-format__visible')
-                            if balance_elem:
-                                text = balance_elem.get_text().strip()
-                                match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
-                                if match:
-                                    try:
-                                        balance_str = match.group(1).replace(' ', '').replace(',', '.')
-                                        balance = float(balance_str)
-                                        logger.info(f"Found balance from div search: {balance} kr")
-                                        break
-                                    except Exception as e:
-                                        logger.debug(f"Error parsing balance: {e}")
-            
-            # Strategy 3: Find balance by position - before transaction section
-            if balance is None:
-                logger.debug("Trying strategy 3: finding balance by position")
+                logger.debug("Trying strategy 2: finding balance by position relative to transactions")
+                # Find the transaction section marker
                 transaksjoner_text = soup.find(string=re.compile('Viser.*siste transaksjoner', re.IGNORECASE))
                 if transaksjoner_text:
                     trans_parent = transaksjoner_text.find_parent()
-                    # Get page HTML to check positions
-                    page_html = driver.page_source
+                    # Get all dnb-number-format spans
+                    all_number_formats = soup.find_all('span', class_='dnb-number-format')
+                    page_html = str(soup)
                     trans_pos = page_html.find('Viser')
                     
-                    # Find all h2 elements with balance format
-                    all_h2 = soup.find_all('h2', class_='dnb-h--large')
-                    logger.debug(f"Found {len(all_h2)} h2 elements with dnb-h--large class")
-                    
-                    for h2 in all_h2:
-                        h2_html = str(h2)
-                        h2_pos = page_html.find(h2_html)
-                        # Check if this h2 appears before the transaction section
-                        if h2_pos != -1 and h2_pos < trans_pos:
-                            balance_elem = h2.find('span', class_='dnb-number-format__visible')
+                    for num_format in all_number_formats:
+                        # Check if this is before the transaction section
+                        num_format_html = str(num_format)
+                        num_pos = page_html.find(num_format_html)
+                        if num_pos != -1 and num_pos < trans_pos:
+                            # Check if this is inside an h2 (balance) not in a table row (transaction)
+                            parent_h2 = num_format.find_parent('h2', class_='dnb-h--large')
+                            parent_tr = num_format.find_parent('tr')
+                            if parent_h2 and not parent_tr:
+                                balance_elem = num_format.find('span', class_='dnb-number-format__visible')
+                                if balance_elem:
+                                    text = balance_elem.get_text().strip()
+                                    text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+                                    match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
+                                    if match:
+                                        try:
+                                            balance_str = match.group(1).replace(' ', '').replace(',', '.')
+                                            balance = float(balance_str)
+                                            logger.info(f"Found balance by position: {balance} kr")
+                                            break
+                                        except Exception as e:
+                                            logger.debug(f"Error parsing balance: {e}")
+            
+            # Strategy 3: Find all h2 elements and check which one is the balance (not in table)
+            if balance is None:
+                logger.debug("Trying strategy 3: finding h2 with balance outside table")
+                all_h2 = soup.find_all('h2', class_='dnb-h--large')
+                for h2 in all_h2:
+                    # Make sure this h2 is NOT inside a table (transactions are in tables)
+                    if not h2.find_parent('table'):
+                        number_format = h2.find('span', class_='dnb-number-format')
+                        if number_format:
+                            balance_elem = number_format.find('span', class_='dnb-number-format__visible')
                             if balance_elem:
                                 text = balance_elem.get_text().strip()
-                                logger.debug(f"Found potential balance h2 with text: {text}")
+                                text = text.replace('\xa0', ' ').replace('&nbsp;', ' ')
+                                # Balance should be positive and reasonably large
                                 match = re.search(r'([\d\s,]+)\s*kr', text, re.IGNORECASE)
                                 if match:
                                     try:
                                         balance_str = match.group(1).replace(' ', '').replace(',', '.')
-                                        balance = float(balance_str)
-                                        logger.info(f"Found balance by position: {balance} kr")
-                                        break
+                                        potential_balance = float(balance_str)
+                                        # Balance is likely positive and > 0
+                                        if potential_balance > 0:
+                                            balance = potential_balance
+                                            logger.info(f"Found balance from h2 outside table: {balance} kr")
+                                            break
                                     except Exception as e:
                                         logger.debug(f"Error parsing balance: {e}")
             
             if balance is None:
                 logger.error("Could not extract balance from page. Page structure may have changed.")
-                # Save a snippet of the page for debugging
-                page_snippet = driver.page_source[:2000]
-                logger.debug(f"Page snippet: {page_snippet}")
+                # Try to find any dnb-number-format__visible and log them for debugging
+                all_visible = soup.find_all('span', class_='dnb-number-format__visible')
+                logger.debug(f"Found {len(all_visible)} dnb-number-format__visible spans")
+                for i, span in enumerate(all_visible[:5]):  # Log first 5
+                    text = span.get_text().strip()
+                    logger.debug(f"  Span {i}: {text}")
             
             # Extract transactions from the DNB table structure
             transactions = []
